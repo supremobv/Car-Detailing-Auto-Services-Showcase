@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {defaultSelection,todayISO,addDays} from '../app/detailing-data.ts';
+const base=process.env.TEST_BASE_URL||'http://127.0.0.1:8791';if(!['127.0.0.1','localhost'].includes(new URL(base).hostname))throw Error('This fixture test runs only against a local preview.');
+const headers={'Content-Type':'application/json',Origin:base},auth={...headers,'oai-authenticated-user-id':'local_qa','oai-authenticated-user-email':'qa@example.com'};
+const body={...defaultSelection,name:'Local service QA',email:'qa@example.com',phone:'',vehicle:'Test sedan, 2022',date:addDays(todayISO(),7),time:'11:00',message:'Local integration fixture.',consent:'on',estimate:1};
+const submit=(data,custom=headers)=>fetch(base+'/api/inquiries',{method:'POST',headers:custom,body:JSON.stringify(data)});
+assert.equal((await fetch(base)).status,200);assert.equal((await fetch(base+'/api/inquiries')).status,401);
+for(const bad of [{date:addDays(todayISO(),-1)},{time:'23:00'},{email:'invalid'},{consent:''},{vehicle:''},{vehicleSize:'unknown'},{packageId:'unknown'},{extras:['glass','glass']},{extras:['unknown']}])assert.equal((await submit({...body,...bad})).status,400);
+assert.equal((await submit(body,{...headers,Origin:'https://other.example'})).status,403);
+const saved=await submit({...body,vehicleSize:'suv',extras:['headlights','glass']});assert.equal(saved.status,201);const result=await saved.json();assert.match(result.reference,/^RF-[A-F0-9]{8}$/);assert.equal(result.estimate,11700);
+const rows=await (await fetch(base+'/api/inquiries',{headers:auth})).json(),row=rows.find(r=>r.reference===result.reference);assert.ok(row);assert.equal(row.estimate,11700);assert.equal(row.vehicleSize,'suv');assert.deepEqual(JSON.parse(row.extras),['headlights','glass']);
+assert.equal((await fetch(base+'/api/inquiries',{method:'PATCH',headers:auth,body:JSON.stringify({id:row.id,status:'Assessment arranged'})})).status,200);
+const updated=await (await fetch(base+'/api/inquiries',{headers:auth})).json();assert.equal(updated.find(r=>r.id===row.id).status,'Assessment arranged');
+console.log('Service inquiry validation, consent, origin protection, server-calculated prices, selected extras, persistence, and studio statuses passed.');
